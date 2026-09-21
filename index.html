@@ -1,0 +1,410 @@
+<style>
+  body { margin:0; min-height:100vh; display:flex; flex-direction:column; justify-content:center; align-items:center; background:#1e1e2f; font-family:Arial,sans-serif; color:#fff; --t:min(92vw,480px); }
+  #statut { width:var(--t); text-align:center; font-size:1.2rem; margin-bottom:12px; min-height:1.5em; }
+  #plateau { display:grid; grid-template-columns:repeat(8,1fr); width:var(--t); height:var(--t); border-radius:8px; overflow:hidden; box-shadow:0 10px 30px rgba(0,0,0,.5); }
+  .case { position:relative; display:flex; justify-content:center; align-items:center; font-size:calc(var(--t)/8*.78); line-height:1; cursor:pointer; user-select:none; }
+  .clair { background:#eeeed2; }
+  .fonce { background:#769656; }
+  .dernier { box-shadow:inset 0 0 0 100px rgba(255,235,59,.4); }
+  .echec { box-shadow:inset 0 0 0 100px rgba(220,50,50,.65); }
+  .select { box-shadow:inset 0 0 0 100px rgba(255,235,59,.75); }
+  .cible::after { content:""; position:absolute; width:30%; height:30%; border-radius:50%; background:rgba(0,0,0,.25); pointer-events:none; }
+  .prise::after { content:""; position:absolute; inset:4%; border-radius:50%; border:5px solid rgba(0,0,0,.25); pointer-events:none; }
+  .pb { color:#fff; text-shadow:0 0 3px #000, 0 0 3px #000, 0 1px 1px #000; }
+  .pn { color:#111; text-shadow:0 0 2px rgba(255,255,255,.5); }
+  .coord { position:absolute; font-size:11px; font-weight:bold; line-height:1; pointer-events:none; }
+  .clair .coord { color:#769656; }
+  .fonce .coord { color:#eeeed2; }
+  .boutons { margin-top:15px; display:flex; flex-wrap:wrap; justify-content:center; gap:10px; width:var(--t); }
+  button { padding:12px 18px; font-size:1rem; color:#fff; background:#ff9500; border:none; border-radius:10px; cursor:pointer; }
+  button:active { transform:scale(.95); }
+  select { padding:12px; font-size:1rem; color:#fff; background:#2b2b40; border:1px solid #555; border-radius:10px; }
+  #promo { position:fixed; inset:0; background:rgba(0,0,0,.65); display:none; justify-content:center; align-items:center; }
+  #promoBox { display:flex; gap:10px; padding:20px; background:#2b2b40; border-radius:15px; }
+  #promoBox button { font-size:2.6rem; padding:8px 16px; background:#769656; line-height:1; }
+</style>
+
+<div id="statut"></div>
+<div id="plateau"></div>
+<div class="boutons">
+  <select id="mode" onchange="nouvelle()">
+    <option value="b">Je joue les blancs</option>
+    <option value="n">Je joue les noirs</option>
+    <option value="2">Deux joueurs</option>
+  </select>
+  <select id="niveau">
+    <option value="1">Facile</option>
+    <option value="2" selected>Moyen</option>
+    <option value="3">Difficile</option>
+  </select>
+  <button onclick="nouvelle()">Nouvelle partie</button>
+  <button onclick="annuler()">Annuler</button>
+</div>
+<div id="promo"><div id="promoBox"></div></div>
+
+<script>
+  var PIECES = { K:"♚\uFE0E", Q:"♛\uFE0E", R:"♜\uFE0E", B:"♝\uFE0E", N:"♞\uFE0E", P:"♟\uFE0E" };
+  var DIR_T = [[-1,0],[1,0],[0,-1],[0,1]];
+  var DIR_D = [[-1,-1],[-1,1],[1,-1],[1,1]];
+  var TOUS = DIR_T.concat(DIR_D);
+  var CAV = [[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]];
+
+  // ---------- Évaluation (pour l'IA) ----------
+  var VAL = { P:100, N:320, B:330, R:500, Q:900, K:0 };
+  var PST = {
+    P:[ 0,0,0,0,0,0,0,0,  50,50,50,50,50,50,50,50,  10,10,20,30,30,20,10,10,  5,5,10,25,25,10,5,5,
+        0,0,0,20,20,0,0,0,  5,-5,-10,0,0,-10,-5,5,  5,10,10,-20,-20,10,10,5,  0,0,0,0,0,0,0,0 ],
+    N:[ -50,-40,-30,-30,-30,-30,-40,-50,  -40,-20,0,0,0,0,-20,-40,  -30,0,10,15,15,10,0,-30,  -30,5,15,20,20,15,5,-30,
+        -30,0,15,20,20,15,0,-30,  -30,5,10,15,15,10,5,-30,  -40,-20,0,5,5,0,-20,-40,  -50,-40,-30,-30,-30,-30,-40,-50 ],
+    B:[ -20,-10,-10,-10,-10,-10,-10,-20,  -10,0,0,0,0,0,0,-10,  -10,0,5,10,10,5,0,-10,  -10,5,5,10,10,5,5,-10,
+        -10,0,10,10,10,10,0,-10,  -10,10,10,10,10,10,10,-10,  -10,5,0,0,0,0,5,-10,  -20,-10,-10,-10,-10,-10,-10,-20 ],
+    R:[ 0,0,0,0,0,0,0,0,  5,10,10,10,10,10,10,5,  -5,0,0,0,0,0,0,-5,  -5,0,0,0,0,0,0,-5,
+        -5,0,0,0,0,0,0,-5,  -5,0,0,0,0,0,0,-5,  -5,0,0,0,0,0,0,-5,  0,0,0,5,5,0,0,0 ],
+    Q:[ -20,-10,-10,-5,-5,-10,-10,-20,  -10,0,0,0,0,0,0,-10,  -10,0,5,5,5,5,0,-10,  -5,0,5,5,5,5,0,-5,
+        0,0,5,5,5,5,0,-5,  -10,5,5,5,5,5,0,-10,  -10,0,5,0,0,0,0,-10,  -20,-10,-10,-5,-5,-10,-10,-20 ],
+    K:[ -30,-40,-40,-50,-50,-40,-40,-30,  -30,-40,-40,-50,-50,-40,-40,-30,  -30,-40,-40,-50,-50,-40,-40,-30,  -30,-40,-40,-50,-50,-40,-40,-30,
+        -20,-30,-30,-40,-40,-30,-30,-20,  -10,-20,-20,-20,-20,-20,-20,-10,  20,20,0,0,0,0,20,20,  20,30,10,0,0,10,30,20 ]
+  };
+
+  // ---------- État du jeu ----------
+  // st = { b: plateau, turn: "w"/"b", castle: droits de roque, ep: case de prise en passant }
+  var st, sel, moves, last, hist, enPromo, etat, humain, flip, reflexion = false, jeton = 0, qmax = 3;
+
+  function nouvelle() {
+    var fond = ["R","N","B","Q","K","B","N","R"], b = [];
+    for (var r = 0; r < 8; r++) { b.push([]); for (var c = 0; c < 8; c++) b[r].push(null); }
+    for (var c = 0; c < 8; c++) {
+      b[0][c] = "b" + fond[c]; b[1][c] = "bP";
+      b[6][c] = "wP";          b[7][c] = "w" + fond[c];
+    }
+    st = { b:b, turn:"w", castle:{ wK:true, wQ:true, bK:true, bQ:true }, ep:null };
+    var mode = document.getElementById("mode").value;
+    humain = mode === "b" ? "w" : (mode === "n" ? "b" : null);
+    flip = humain === "b";
+    sel = null; moves = []; last = null; hist = []; enPromo = null;
+    jeton++; reflexion = false;
+    document.getElementById("promo").style.display = "none";
+    dessiner();
+  }
+
+  // ---------- Règles ----------
+  function dedans(r, c) { return r >= 0 && r < 8 && c >= 0 && c < 8; }
+
+  function roi(b, col) {
+    for (var r = 0; r < 8; r++) for (var c = 0; c < 8; c++) if (b[r][c] === col + "K") return { r:r, c:c };
+  }
+
+  function glisse(b, r, c, dirs, types, par) {
+    for (var i = 0; i < dirs.length; i++) {
+      var rr = r + dirs[i][0], cc = c + dirs[i][1];
+      while (dedans(rr, cc)) {
+        var q = b[rr][cc];
+        if (q) { if (q[0] === par && types.indexOf(q[1]) > -1) return true; break; }
+        rr += dirs[i][0]; cc += dirs[i][1];
+      }
+    }
+    return false;
+  }
+
+  // La case (r,c) est-elle attaquée par la couleur "par" ?
+  function attaque(b, r, c, par) {
+    var pr = par === "w" ? r + 1 : r - 1;
+    if (dedans(pr, c - 1) && b[pr][c - 1] === par + "P") return true;
+    if (dedans(pr, c + 1) && b[pr][c + 1] === par + "P") return true;
+    for (var i = 0; i < 8; i++) {
+      var nr = r + CAV[i][0], nc = c + CAV[i][1];
+      if (dedans(nr, nc) && b[nr][nc] === par + "N") return true;
+    }
+    for (var dr = -1; dr <= 1; dr++) for (var dc = -1; dc <= 1; dc++) {
+      if ((dr || dc) && dedans(r + dr, c + dc) && b[r + dr][c + dc] === par + "K") return true;
+    }
+    return glisse(b, r, c, DIR_T, ["R","Q"], par) || glisse(b, r, c, DIR_D, ["B","Q"], par);
+  }
+
+  function coupsPseudo(b, r, c, ep) {
+    var p = b[r][c], col = p[0], t = p[1], res = [];
+    function add(tr, tc, dbl, e) { res.push({ fr:r, fc:c, tr:tr, tc:tc, double:dbl, ep:e }); }
+    function glisser(dirs) {
+      for (var i = 0; i < dirs.length; i++) {
+        var rr = r + dirs[i][0], cc = c + dirs[i][1];
+        while (dedans(rr, cc)) {
+          if (!b[rr][cc]) add(rr, cc);
+          else { if (b[rr][cc][0] !== col) add(rr, cc); break; }
+          rr += dirs[i][0]; cc += dirs[i][1];
+        }
+      }
+    }
+    if (t === "P") {
+      var dir = col === "w" ? -1 : 1, dep = col === "w" ? 6 : 1;
+      if (dedans(r + dir, c) && !b[r + dir][c]) {
+        add(r + dir, c);
+        if (r === dep && !b[r + 2 * dir][c]) add(r + 2 * dir, c, true);
+      }
+      for (var k = -1; k <= 1; k += 2) {
+        var tr = r + dir, tc = c + k;
+        if (!dedans(tr, tc)) continue;
+        if (b[tr][tc] && b[tr][tc][0] !== col) add(tr, tc);
+        else if (ep && ep.r === tr && ep.c === tc) add(tr, tc, false, true);
+      }
+    }
+    if (t === "N" || t === "K") {
+      var liste = t === "N" ? CAV : TOUS;
+      for (var i = 0; i < liste.length; i++) {
+        var nr = r + liste[i][0], nc = c + liste[i][1];
+        if (dedans(nr, nc) && (!b[nr][nc] || b[nr][nc][0] !== col)) add(nr, nc);
+      }
+    }
+    if (t === "R" || t === "Q") glisser(DIR_T);
+    if (t === "B" || t === "Q") glisser(DIR_D);
+    return res;
+  }
+
+  function appliquer(b, m) {
+    var nb = b.map(function (row) { return row.slice(); });
+    var p = nb[m.fr][m.fc];
+    nb[m.fr][m.fc] = null;
+    if (m.ep) nb[m.fr][m.tc] = null;
+    nb[m.tr][m.tc] = p;
+    if (m.castle) {
+      if (m.tc === 6) { nb[m.tr][5] = nb[m.tr][7]; nb[m.tr][7] = null; }
+      else            { nb[m.tr][3] = nb[m.tr][0]; nb[m.tr][0] = null; }
+    }
+    if (p[1] === "P" && (m.tr === 0 || m.tr === 7)) nb[m.tr][m.tc] = p[0] + (m.promo || "Q");
+    return nb;
+  }
+
+  // Renvoie le nouvel état après le coup m (l'ancien état n'est pas modifié)
+  function suivant(s, m) {
+    var p = s.b[m.fr][m.fc];
+    var cs = { wK:s.castle.wK, wQ:s.castle.wQ, bK:s.castle.bK, bQ:s.castle.bQ };
+    if (p[1] === "K") { cs[p[0] + "K"] = false; cs[p[0] + "Q"] = false; }
+    if ((m.fr === 7 && m.fc === 0) || (m.tr === 7 && m.tc === 0)) cs.wQ = false;
+    if ((m.fr === 7 && m.fc === 7) || (m.tr === 7 && m.tc === 7)) cs.wK = false;
+    if ((m.fr === 0 && m.fc === 0) || (m.tr === 0 && m.tc === 0)) cs.bQ = false;
+    if ((m.fr === 0 && m.fc === 7) || (m.tr === 0 && m.tc === 7)) cs.bK = false;
+    return {
+      b: appliquer(s.b, m),
+      turn: s.turn === "w" ? "b" : "w",
+      castle: cs,
+      ep: m.double ? { r:(m.fr + m.tr) / 2, c:m.fc } : null
+    };
+  }
+
+  function coupsLegaux(s, r, c) {
+    var b = s.b, p = b[r][c], col = p[0], opp = col === "w" ? "b" : "w";
+    var liste = coupsPseudo(b, r, c, s.ep).filter(function (m) {
+      var nb = appliquer(b, m), k = roi(nb, col);
+      return !attaque(nb, k.r, k.c, opp);
+    });
+    if (p[1] === "K") {
+      var l = col === "w" ? 7 : 0;
+      if (r === l && c === 4 && !attaque(b, l, 4, opp)) {
+        if (s.castle[col + "K"] && b[l][7] === col + "R" && !b[l][5] && !b[l][6] &&
+            !attaque(b, l, 5, opp) && !attaque(b, l, 6, opp))
+          liste.push({ fr:l, fc:4, tr:l, tc:6, castle:true });
+        if (s.castle[col + "Q"] && b[l][0] === col + "R" && !b[l][1] && !b[l][2] && !b[l][3] &&
+            !attaque(b, l, 3, opp) && !attaque(b, l, 2, opp))
+          liste.push({ fr:l, fc:4, tr:l, tc:2, castle:true });
+      }
+    }
+    return liste;
+  }
+
+  function tousCoups(s) {
+    var res = [];
+    for (var r = 0; r < 8; r++) for (var c = 0; c < 8; c++) {
+      if (s.b[r][c] && s.b[r][c][0] === s.turn) res = res.concat(coupsLegaux(s, r, c));
+    }
+    return res;
+  }
+
+  function enEchec(s) {
+    var k = roi(s.b, s.turn);
+    return attaque(s.b, k.r, k.c, s.turn === "w" ? "b" : "w");
+  }
+
+  function analyse() {
+    var echec = enEchec(st), fin = tousCoups(st).length === 0, msg = "";
+    if (fin) msg = echec ? "Échec et mat ! Les " + (st.turn === "w" ? "noirs" : "blancs") + " gagnent 🏆" : "Pat : match nul 🤝";
+    return { echec:echec, fin:fin, msg:msg };
+  }
+
+  // ---------- Intelligence artificielle ----------
+  function evaluer(b) {
+    var s = 0;
+    for (var r = 0; r < 8; r++) for (var c = 0; c < 8; c++) {
+      var p = b[r][c];
+      if (!p) continue;
+      var w = p[0] === "w";
+      var v = VAL[p[1]] + PST[p[1]][w ? r * 8 + c : (7 - r) * 8 + c];
+      s += w ? v : -v;
+    }
+    return s;
+  }
+
+  // Trie les coups : les captures intéressantes d'abord (accélère la recherche)
+  function ordonner(b, coups) {
+    coups.forEach(function (m) {
+      var v = b[m.tr][m.tc];
+      m.ordre = v ? 1000 + 10 * VAL[v[1]] - VAL[b[m.fr][m.fc][1]] : (m.ep ? 1900 : 0);
+    });
+    coups.sort(function (a, c) { return c.ordre - a.ordre; });
+  }
+
+  function captures(s) {
+    var res = [];
+    for (var r = 0; r < 8; r++) for (var c = 0; c < 8; c++) {
+      var p = s.b[r][c];
+      if (!p || p[0] !== s.turn) continue;
+      var l = coupsPseudo(s.b, r, c, s.ep);
+      for (var i = 0; i < l.length; i++) if (s.b[l[i].tr][l[i].tc] || l[i].ep) res.push(l[i]);
+    }
+    return res;
+  }
+
+  // Recherche de "calme" : on continue à regarder les captures pour ne pas s'arrêter en plein échange
+  function quies(s, alpha, beta, prof) {
+    var e = evaluer(s.b), stand = s.turn === "w" ? e : -e;
+    if (stand >= beta) return beta;
+    if (prof === 0) return stand;
+    if (stand > alpha) alpha = stand;
+    var caps = captures(s);
+    ordonner(s.b, caps);
+    for (var i = 0; i < caps.length; i++) {
+      var enf = suivant(s, caps[i]);
+      var k = roi(enf.b, s.turn);
+      if (attaque(enf.b, k.r, k.c, enf.turn)) continue; // coup illégal
+      var sc = -quies(enf, -beta, -alpha, prof - 1);
+      if (sc >= beta) return beta;
+      if (sc > alpha) alpha = sc;
+    }
+    return alpha;
+  }
+
+  function negamax(s, prof, alpha, beta, ply) {
+    if (prof === 0) return quies(s, alpha, beta, qmax);
+    var coups = tousCoups(s);
+    if (!coups.length) return enEchec(s) ? -100000 + ply : 0;
+    ordonner(s.b, coups);
+    for (var i = 0; i < coups.length; i++) {
+      var sc = -negamax(suivant(s, coups[i]), prof - 1, -beta, -alpha, ply + 1);
+      if (sc >= beta) return beta;
+      if (sc > alpha) alpha = sc;
+    }
+    return alpha;
+  }
+
+  function meilleurCoup(s, niveau) {
+    var coups = tousCoups(s);
+    if (!coups.length) return null;
+    ordonner(s.b, coups);
+    var prof = niveau;                                  // 1, 2 ou 3 demi-coups
+    var bruit = niveau === 1 ? 60 : (niveau === 2 ? 10 : 0); // un peu de hasard pour les niveaux faibles
+    qmax = niveau === 1 ? 0 : 3;
+    var meilleur = null, meilleurScore = -Infinity;
+    for (var i = 0; i < coups.length; i++) {
+      var sc = -negamax(suivant(s, coups[i]), prof - 1, -Infinity, Infinity, 1) + Math.random() * bruit;
+      if (sc > meilleurScore) { meilleurScore = sc; meilleur = coups[i]; }
+    }
+    return meilleur;
+  }
+
+  // ---------- Interaction ----------
+  function clic(r, c) {
+    if (etat.fin || enPromo || reflexion) return;
+    if (humain && st.turn !== humain) return;
+    var m = null;
+    for (var i = 0; i < moves.length; i++) if (moves[i].tr === r && moves[i].tc === c) m = moves[i];
+    if (sel && m) { jouer(m); return; }
+    var p = st.b[r][c];
+    if (p && p[0] === st.turn) { sel = { r:r, c:c }; moves = coupsLegaux(st, r, c); }
+    else { sel = null; moves = []; }
+    dessiner();
+  }
+
+  function jouer(m) {
+    var p = st.b[m.fr][m.fc];
+    if (p[1] === "P" && (m.tr === 0 || m.tr === 7) && !m.promo) { enPromo = m; afficherPromo(p[0]); return; }
+    hist.push({ st:st, last:last });
+    st = suivant(st, m);
+    last = m; sel = null; moves = [];
+    dessiner();
+  }
+
+  function afficherPromo(col) {
+    var box = document.getElementById("promoBox");
+    box.innerHTML = "";
+    ["Q","R","B","N"].forEach(function (t) {
+      var b = document.createElement("button");
+      b.textContent = PIECES[t];
+      b.className = col === "w" ? "pb" : "pn";
+      b.onclick = function () {
+        var m = enPromo; m.promo = t; enPromo = null;
+        document.getElementById("promo").style.display = "none";
+        jouer(m);
+      };
+      box.appendChild(b);
+    });
+    document.getElementById("promo").style.display = "flex";
+  }
+
+  function annuler() {
+    if (!hist.length) return;
+    jeton++; reflexion = false;
+    var h = hist.pop(); st = h.st; last = h.last;
+    // Contre l'ordinateur : on annule aussi son coup pour te rendre la main
+    if (humain && st.turn !== humain && hist.length) { h = hist.pop(); st = h.st; last = h.last; }
+    sel = null; moves = []; enPromo = null;
+    document.getElementById("promo").style.display = "none";
+    dessiner();
+  }
+
+  function dessiner() {
+    etat = analyse();
+    var pl = document.getElementById("plateau");
+    pl.innerHTML = "";
+    var rEchec = etat.echec ? roi(st.b, st.turn) : null;
+    for (var i = 0; i < 8; i++) {
+      for (var j = 0; j < 8; j++) {
+        var r = flip ? 7 - i : i, c = flip ? 7 - j : j;
+        var d = document.createElement("div");
+        var cls = "case " + ((r + c) % 2 === 0 ? "clair" : "fonce");
+        if (last && ((last.fr === r && last.fc === c) || (last.tr === r && last.tc === c))) cls += " dernier";
+        if (rEchec && rEchec.r === r && rEchec.c === c) cls += " echec";
+        if (sel && sel.r === r && sel.c === c) cls += " select";
+        for (var k = 0; k < moves.length; k++) {
+          if (moves[k].tr === r && moves[k].tc === c) cls += (st.b[r][c] || moves[k].ep) ? " prise" : " cible";
+        }
+        d.className = cls;
+        var p = st.b[r][c];
+        if (p) {
+          var s = document.createElement("span");
+          s.className = p[0] === "w" ? "pb" : "pn";
+          s.textContent = PIECES[p[1]];
+          d.appendChild(s);
+        }
+        if (j === 0) { var n = document.createElement("span"); n.className = "coord"; n.style.left = "3px"; n.style.top = "3px"; n.textContent = 8 - r; d.appendChild(n); }
+        if (i === 7) { var l = document.createElement("span"); l.className = "coord"; l.style.right = "3px"; l.style.bottom = "3px"; l.textContent = "abcdefgh"[c]; d.appendChild(l); }
+        d.onclick = (function (rr, cc) { return function () { clic(rr, cc); }; })(r, c);
+        pl.appendChild(d);
+      }
+    }
+    document.getElementById("statut").textContent = etat.fin ? etat.msg :
+      "Au tour des " + (st.turn === "w" ? "blancs ⚪" : "noirs ⚫") + (etat.echec ? " — Échec !" : "");
+
+    // C'est à l'ordinateur de jouer ?
+    if (humain && !etat.fin && st.turn !== humain && !reflexion) {
+      reflexion = true;
+      document.getElementById("statut").textContent = "L'ordinateur réfléchit… 🤔";
+      var t = jeton;
+      setTimeout(function () {
+        if (t !== jeton) return; // partie recommencée ou coup annulé entre-temps
+        var m = meilleurCoup(st, parseInt(document.getElementById("niveau").value, 10));
+        reflexion = false;
+        if (m) { m.promo = "Q"; jouer(m); } // l'IA promeut toujours en dame
+      }, 60);
+    }
+  }
+
+  nouvelle();
+</script>
